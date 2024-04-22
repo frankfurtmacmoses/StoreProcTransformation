@@ -1,0 +1,302 @@
+USE [ARStaging]
+GO
+
+/****** Object:  View [HCTO].[VW_FG_FIN_TRANS_STEP0]   
+Modified: by Frankfurt Ogunfunminiyi
+Email: frankfurt.ogunfunminiyi@houstontx.org
+Date: 4/22/2024 9
+*********/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+CREATE VIEW [HCTO].[VW_FG_FIN_TRANS_STEP0]	 AS 
+WITH Sources AS (  
+	SELECT	DESTINATION
+			,SOURCE_KEY = MAX(SOURCE_KEY) 
+	FROM GENERIC.SOURCE_FILE 
+	GROUP BY DESTINATION
+), Assignments0 AS (
+	SELECT DISTINCT
+		  CAN      = [HCTO GEO] 
+		, YEAR     = [Tax Year]
+		, Vendor   = ISNULL(NULLIF(LTRIM(RTRIM(Attorney)),''),'CoH')
+		, PropType = [Prop Type]
+		--, SOURCE_KEY
+		, AssignmentYear = [Assignment Year]
+	FROM HCTO.[COH-ASSIGNMENT_NEW] R
+	WHERE [Tax Year] BETWEEN 1900 AND YEAR(GETDATE()) + 1
+), Assignments1 AS (
+	SELECT DISTINCT
+		  CAN     
+		, YEAR
+		, PropType
+		, Vendor  
+		, PriorVendor = FIRST_VALUE(Vendor) OVER (PARTITION BY CAN, YEAR ORDER BY AssignmentYear ROWS 1 PRECEDING)
+		, PriorAssignmentYear = FIRST_VALUE(AssignmentYear) OVER (PARTITION BY CAN, YEAR ORDER BY AssignmentYear ROWS 1 PRECEDING)
+		--, PriorYear = FIRST_VALUE(YEAR) OVER (PARTITION BY CAN ORDER BY YEAR, AssignmentYear ROWS 1 PRECEDING)
+		--, SOURCE_KEY
+		, AssignmentYear
+	FROM Assignments0
+), Assignments2 AS (
+	SELECT *
+		, PriorVendor2 = IIF(AssignmentYear = PriorAssignmentYear, 'CoH', PriorVendor)
+	FROM Assignments1
+	WHERE PriorVendor <> Vendor OR AssignmentYear = PriorAssignmentYear
+), Assignment3 AS (
+	SELECT *
+		, TO_Date = CONVERT(DATE,
+			IIF(PriorVendor2 = 'CoH' -- FIRST Time Delinquent
+				, FORMAT(Year + 1, '0000') + IIF( PropType  = 'R', '-07-01', '-04-01')
+				, IIF(PriorVendor = Vendor
+				    , FORMAT(Year    , '0000') + '-10-01' -- Already delinquent
+					 , FORMAT(AssignmentYear, '0000') + IIF( PropType  = 'R', '-07-01', '-04-01')
+				   )
+			    )
+			)
+	FROM Assignments2
+	WHERE PriorVendor <> Vendor OR AssignmentYear = PriorAssignmentYear
+), Bills AS (
+	SELECT   LEVY										[TRANS_AMT]
+			,'Billed'									[MSTR_TRANS_TYPE]
+			,'Base Amount Billed'						[DET_TRANS_DESCR]
+			,'10/1/'+CONVERT(VARCHAR(4),YEAR)			[TRANS_DTE]
+			,'Billed'									[STATUS]
+			,'N'										[DERIVED_TRANS_FLAG]
+			,CAN
+			,YEAR
+			,'COH-RECEIVABLE'							[SOURCE]
+			,DUEDATE
+			,VETERAN
+			,DISABLED
+			,OVER65
+			,HOMESTEAD
+			,DATE_3348
+			,DATE_3308
+	FROM HCTO.[COH-RECEIVABLE] R
+	--WHERE R.SOURCE_KEY=20170303002
+	INNER JOIN SOURCES S ON R.SOURCE_KEY=S.SOURCE_KEY
+							AND S.DESTINATION='HCTO.[COH-RECEIVABLE]'
+), Payments AS (
+	SELECT	 -1*D.LEVY									[TRANS_AMT]
+			,'Paid' 		 							[MSTR_TRANS_TYPE]
+			,'Base, City Portion Paid'		   			[DET_TRANS_DESCR]
+			,D.DEPOSITDATE								[TRANS_DTE]
+			,ISNULL(C.Status,D.STATUS)					[STATUS]
+			,'N'										[DERIVED_TRANS_FLAG]
+			,CAN
+			,YEAR
+			,'COH-DISTRIBUTION'							[SOURCE]
+			,CASE WHEN ATTPAID = 0.00 
+				THEN 0 ELSE 1 END						[ASSIGNED_TO_VENDOR]
+	FROM HCTO.[COH-DISTRIBUTION] D
+	LEFT JOIN [HCTO].[PAYMENT_STATUS_CODE] C ON D.STATUS=C.ID
+	WHERE ISNULL(D.LEVY,0)<>0
+
+), VendorAssignments AS (
+	SELECT DISTINCT A.*
+	FROM Assignment3 A
+	INNER JOIN Payments P ON A.CAN = P.CAN AND A.YEAR = P.YEAR
+	WHERE P.ASSIGNED_TO_VENDOR = 1
+), Assignments AS (
+	SELECT *
+		, End_Date = DATEADD(d, -1, (LEAD(TO_Date, 1) OVER (PARTITION BY CAN, YEAR ORDER BY TO_Date)))
+	FROM VendorAssignments
+), Delinquent AS (
+	SELECT  SUM(CONVERT(MONEY,[City RFPD Tax])/100) [LEVY]
+			,Account CAN
+			,YEAR
+	FROM HCTO.[COH-DELINQUENT] R
+
+	INNER JOIN SOURCES S ON R.SOURCE_KEY=S.SOURCE_KEY
+						AND S.DESTINATION='HCTO.[COH-DELINQUENT]'
+	WHERE [City/RFPD Jurisdiction ID]=61 
+	--AND R.SOURCE_KEY=20170303001
+	GROUP BY ACCOUNT, YEAR
+), DelinquentAdjusments AS (
+SELECT 
+		ISNULL(ISNULL(Payments.CAN,Bills.CAN),Delinquent.CAN)+'-'+CONVERT(VARCHAR(4),ISNULL(ISNULL(Payments.YEAR,Bills.YEAR),Delinquent.YEAR))	[SRC_SYS_ID]
+      ,(ISNULL(Delinquent.LEVY,0)-ISNULL(Payments.DISLEVY,0))-ISNULL(Bills.LEVY,0)				[TRANS_AMT]
+      ,'Billed'																					[MSTR_TRANS_TYPE]
+      ,'Base Amount Billed'																		[DET_TRANS_DESCR]
+      ,'10/1/'+CONVERT(VARCHAR(4),ISNULL(ISNULL(Payments.YEAR,Bills.YEAR),Delinquent.YEAR))		[TRANS_DTE]
+      ,'Billed'																					[STATUS]
+      ,'Y'																						[DERIVED_TRANS_FLAG]
+      ,ISNULL(ISNULL(Payments.CAN,Bills.CAN),Delinquent.CAN)									[CAN]
+      ,ISNULL(ISNULL(Payments.YEAR,Bills.YEAR),Delinquent.YEAR)									[YEAR]
+      ,CASE WHEN ISNULL(Bills.LEVY,0)=0 THEN 'Receivables are zero'
+				ELSE 'Deliquent + distribution greater than receivables' END					[SOURCE]
+	FROM (
+		SELECT SUM([TRANS_AMT]) DISLEVY, CAN, YEAR
+		FROM Payments
+		GROUP BY CAN, YEAR
+		)  Payments 
+	FULL JOIN 
+		(SELECT SUM([TRANS_AMT]) [LEVY], CAN, YEAR
+		FROM Bills
+		GROUP BY CAN, YEAR) Bills ON (Payments.CAN=Bills.CAN AND Payments.Year=Bills.YEAR) 
+	FULL JOIN 
+		(
+		SELECT [LEVY]
+				,CAN
+				,YEAR
+		FROM Delinquent
+		) Delinquent ON Delinquent.CAN=ISNULL(Payments.CAN,Bills.CAN) AND Delinquent.YEAR=ISNULL(Payments.YEAR,Bills.YEAR)
+	WHERE (ISNULL(Bills.LEVY,0)=0																	---Receivable is zero
+	OR ISNULL(Delinquent.LEVY,0)+ISNULL(Payments.DISLEVY,0)>ISNULL(Bills.LEVY,0)					--Delinquent + distributions greater than receivable
+	)
+	AND NOT ( ISNULL(DISLEVY,0)=0 AND ISNULL(Bills.LEVY,0)=0 AND ISNULL(Delinquent.LEVY,0)=0 )		---Delinquent, Distributions and receivables different than 0.
+	--AND NOT (ISNULL(Delinquent.LEVY,0)-ISNULL(Payments.DISLEVY,0))-ISNULL(Bills.LEVY,0)	<0			--Adjustment not less than 0
+
+), DELINQUENT_CTE(CAN, YEAR, DELINQ_DTE) AS (
+	SELECT ACCOUNT CAN
+					,YEAR
+					,MIN(MONTH_END) DELINQ_DTE
+			FROM [HCTO].[COH-DELINQUENT]
+			WHERE [City/RFPD Jurisdiction ID]=61
+			GROUP BY Account, YEAR
+), COWNER AS (
+	SELECT O.* FROM HCTO.[COH-OWNER] O
+	INNER JOIN SOURCES S ON O.SOURCE_KEY=S.SOURCE_KEY
+						AND S.DESTINATION='HCTO.[COH-OWNER]'
+), TAXDTL AS (
+	SELECT T.* FROM HCTO.[COH-TAXDTL] T
+	INNER JOIN SOURCES S ON T.SOURCE_KEY=S.SOURCE_KEY
+						AND S.DESTINATION='HCTO.[COH-TAXDTL]'
+), Transactions AS (
+	SELECT	     B.[TRANS_AMT]
+				,B.MSTR_TRANS_TYPE
+				,B.DET_TRANS_DESCR
+				,B.TRANS_DTE
+				,B.STATUS
+				,B.DERIVED_TRANS_FLAG
+				,B.CAN
+				,B.YEAR		
+				,B.SOURCE	
+		FROM Bills B
+		UNION ALL
+		SELECT	 P.[TRANS_AMT]
+				,P.MSTR_TRANS_TYPE
+				,P.DET_TRANS_DESCR
+				,P.TRANS_DTE
+				,P.STATUS
+				,P.DERIVED_TRANS_FLAG
+				,P.CAN
+				,P.YEAR	
+				,P.SOURCE
+		FROM Payments P
+		UNION ALL
+		SELECT	 DA.[TRANS_AMT]
+				,DA.MSTR_TRANS_TYPE
+				,DA.DET_TRANS_DESCR
+				,DA.TRANS_DTE
+				,DA.STATUS 
+				,DA.DERIVED_TRANS_FLAG
+				,DA.CAN
+				,DA.YEAR	
+				,DA.SOURCE
+		FROM DelinquentAdjusments DA
+), Turnover AS (
+		SELECT DISTINCT
+			     A.TO_Date
+				,A.Vendor    
+				,A.CAN       
+				,A.YEAR      
+				,TRANS_AMT = SUM(		T.TRANS_AMT		    ) OVER (PARTITION BY A.CAN, A.YEAR                       												 )
+				,STATUS    = LAST_VALUE(T.STATUS			) OVER (PARTITION BY A.CAN, A.YEAR ORDER BY T.TRANS_DTE RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+				,FLAG      = LAST_VALUE(T.DERIVED_TRANS_FLAG) OVER (PARTITION BY A.CAN, A.YEAR ORDER BY T.TRANS_DTE RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+		FROM Assignments  A 
+		JOIN Transactions T  ON T.CAN        = A.CAN 
+		                    AND T.YEAR       = A.YEAR
+							AND T.TRANS_DTE <= A.TO_Date
+), All_Transactions AS (
+		SELECT T.*
+			, VERS_ASSIGNED_VEND = IIF(T.TRANS_DTE < A.TO_DATE, 'CoH', A.Vendor)
+			, TO_Date            = IIF(T.TRANS_DTE < A.TO_DATE, CONVERT(DATE, FORMAT(T.YEAR, '0000') + '-10-01'), A.TO_DATE)
+		FROM      Transactions T
+		LEFT JOIN Assignments  A   ON A.CAN = T.CAN   AND A.YEAR = T.YEAR
+			AND (T.TRANS_DTE BETWEEN A.TO_Date AND COALESCE(A.End_Date, GETDATE()) OR (PriorVendor2 = 'CoH' AND T.TRANS_DTE < A.TO_DATE))
+		UNION ALL
+		SELECT	 TRANS_AMT
+				,'Turnover'
+				,'Base, Turnover'
+				,TO_Date
+				,STATUS 
+				,FLAG
+				,CAN
+				,YEAR	
+				,'COH-ASSIGNMENT'
+				,Vendor
+				,TO_Date
+		FROM Turnover
+		UNION ALL
+		SELECT	-TRANS_AMT
+				,'Turnback'
+				,'Base, Turnback'
+				,DATEADD(Day, -1, TO_Date)
+				,STATUS 
+				,FLAG
+				,CAN
+				,YEAR	
+				,'COH-ASSIGNMENT'
+				,'CoH'
+				,CONVERT(DATE, FORMAT(YEAR, '0000') + '-10-01')
+		FROM Turnover A
+)
+SELECT  F.CAN
+      , O.NameLine1
+	  , O.NameLine2
+	  , O.NameLine3
+	  , O.NameLine4
+	  , O.City
+	  , O.State
+	  , O.Country
+	  , O.ZipCode
+	  , F.TRANS_DTE
+	  , F.MSTR_TRANS_TYPE
+	  , F.DET_TRANS_DESCR
+	  , SRC_SYS_ID = F.CAN + '-' + FORMAT(F.Year, '0000')
+	  , T.PNUMBER
+	  , T.PSTRNAME
+	  , T.PZIP
+	  , R.[ROLL TYPE]
+	  , T.LEGACRES
+	  , T.PROPCLASS
+	  , O.TAXDEFSTRT
+	  , O.TAXDEFEND
+	  , T.LEGAL1
+      , T.LEGAL2
+      , T.LEGAL3
+      , T.LEGAL4
+      , T.LEGAL5
+	  , T.ROLL
+	  , P.PROPERTY_DESCRIPTION
+	  , D.DELINQ_DTE
+      , REC.DUEDATE
+	  , REC.VETERAN
+	  , REC.DISABLED
+	  , REC.OVER65
+	  , REC.HOMESTEAD
+	  , REC.DATE_3348
+	  , REC.DATE_3308
+	  , F.TRANS_AMT
+	  , F.YEAR
+	  , F.SOURCE
+	  ,'***-000001'	   [CONTR_ID]
+	  , VERS_ASSIGNED_VEND
+	  , TO_Date
+FROM All_Transactions F	
+LEFT JOIN COWNER					O	ON F.CAN = O.CAN
+LEFT JOIN TAXDTL					T	ON F.CAN = REPLACE(T.CAN,CHAR(10),'')			---Remove char(10) line feed 
+LEFT JOIN HCTO.ROLL_TYPES			R	ON T.ROLL = R.[Roll Code]
+LEFT JOIN HCTO.PROPERTY_CLASS_CODES	P	ON T.PROPCLASS = P.Property_Code
+LEFT JOIN DELINQUENT_CTE			D	ON F.CAN = D.CAN   AND F.YEAR = D.Year
+LEFT JOIN Bills						REC ON F.CAN = REC.CAN AND F.YEAR = REC.YEAR
+-- */
+GO
+
+
