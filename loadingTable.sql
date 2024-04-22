@@ -1,0 +1,252 @@
+USE [ARDatamart]
+GO
+
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+-- GENERIC.SP_LOAD_DIM_TRANSACTION 'HPL', '2017-03-01'
+CREATE PROCEDURE [GENERIC].[SP_LOAD_DIM_TRANSACTION]
+ @SOURCE VARCHAR(30), @CURRENT_DTE DATE = NULL
+ as 
+ BEGIN
+  EXEC GENERIC.SP_Log @SOURCE, 'GENERIC.SP_LOAD_DIM_TRANSACTION', 'Started Merge', '', @@PROCID;
+  EXEC ('With Source as (
+    SELECT Distinct SurrogateKey_                            = NULL
+         , BusinessKey_                             = DET_TRANS_CODE
+         , ALLOC_TRANS_FLAG
+         , DERIVED_TRANS_FLAG
+         , DET_TRANS_DESCR
+         , DIGITECH_TRANS_TYPE
+         , DIGITECH_TRANS_TYPE_DET
+         , INTRA_FUND_TRANS_FLAG
+         , MAN_TRANS_FLAG
+         , MSTR_TRANS_TYPE
+         , PAY_METH
+         , PMAM_ADJMT_TO
+         , PMAM_ADJMT_TYPE
+         , SMARTCM_IS_ADJMT
+         , SMARTCM_IS_FEE
+         , SMARTCM_IS_PAY
+         , SMARTCM_OTHER_CRITERIA
+         , SRC_SYS
+         , T2_TRANS_MISC_ITEM_CODE
+         , T2_TRANS_MISC_ITEM_DESCR
+         , T2_TRANS_ORIG_OBJ_TYPE_ID
+         , T2_TRANS_PARSED_DESCR
+         , T2_TRANS_RSN
+         , T2_TRANS_SCENARIO
+         , T2_TRANS_TYPE_CODE
+         , T2_TRANS_TYPE_DESCR
+         , LOAD_DTE
+         , LOAD_TIME
+      FROM [' + @SOURCE + '].VW_FINTRANS
+), Existing as (
+    SELECT SurrogateKey_                            = TRANSACTION_KEY
+         , BusinessKey_                             = DET_TRANS_CODE
+         , ALLOC_TRANS_FLAG
+         , DERIVED_TRANS_FLAG
+         , DET_TRANS_DESCR
+         , DIGITECH_TRANS_TYPE
+         , DIGITECH_TRANS_TYPE_DET
+         , INTRA_FUND_TRANS_FLAG
+         , MAN_TRANS_FLAG
+         , MSTR_TRANS_TYPE
+         , PAY_METH
+         , PMAM_ADJMT_TO
+         , PMAM_ADJMT_TYPE
+         , SMARTCM_IS_ADJMT
+         , SMARTCM_IS_FEE
+         , SMARTCM_IS_PAY
+         , SMARTCM_OTHER_CRITERIA
+         , SRC_SYS
+         , T2_TRANS_MISC_ITEM_CODE
+         , T2_TRANS_MISC_ITEM_DESCR
+         , T2_TRANS_ORIG_OBJ_TYPE_ID
+         , T2_TRANS_PARSED_DESCR
+         , T2_TRANS_RSN
+         , T2_TRANS_SCENARIO
+         , T2_TRANS_TYPE_CODE
+         , T2_TRANS_TYPE_DESCR
+         , LOAD_DTE
+         , LOAD_TIME
+      FROM [' + @SOURCE + '].DIM_TRANSACTION
+), Together0 as (
+    SELECT *  FROM Existing UNION ALL SELECT * FROM Source
+)
+ SELECT * INTO #Together0 FROM Together0;; 
+ With Together1 as (
+    SELECT Distinct SurrogateKey_ 
+         , BusinessKey_  
+         , ALLOC_TRANS_FLAG
+         , DERIVED_TRANS_FLAG
+         , DET_TRANS_DESCR
+         , DIGITECH_TRANS_TYPE
+         , DIGITECH_TRANS_TYPE_DET
+         , INTRA_FUND_TRANS_FLAG
+         , MAN_TRANS_FLAG
+         , MSTR_TRANS_TYPE
+         , PAY_METH
+         , PMAM_ADJMT_TO
+         , PMAM_ADJMT_TYPE
+         , SMARTCM_IS_ADJMT
+         , SMARTCM_IS_FEE
+         , SMARTCM_IS_PAY
+         , SMARTCM_OTHER_CRITERIA
+         , SRC_SYS
+         , T2_TRANS_MISC_ITEM_CODE
+         , T2_TRANS_MISC_ITEM_DESCR
+         , T2_TRANS_ORIG_OBJ_TYPE_ID
+         , T2_TRANS_PARSED_DESCR
+         , T2_TRANS_RSN
+         , T2_TRANS_SCENARIO
+         , T2_TRANS_TYPE_CODE
+         , T2_TRANS_TYPE_DESCR
+         , LOAD_DTE
+         , LOAD_TIME
+      FROM #Together0
+), Together2 as (
+    SELECT NRec_  = ROW_NUMBER() OVER (PARTITION BY BusinessKey_ ORDER BY ISNULL(SurrogateKey_, 2147483647))
+         , *
+      FROM Together1          
+)
+ SELECT * INTO #Together2 FROM Together2;; 
+ WITH Ordered as (
+    SELECT S.SurrogateKey_ 
+         , S.BusinessKey_  
+         , S.NRec_         
+         , NewRec_ = IIF (P.BusinessKey_ is NULL                  , 1, 0) 
+         , ALLOC_TRANS_FLAG                         = LAST_VALUE(S.ALLOC_TRANS_FLAG ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , DERIVED_TRANS_FLAG                       = LAST_VALUE(S.DERIVED_TRANS_FLAG ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , DET_TRANS_DESCR                          = LAST_VALUE(S.DET_TRANS_DESCR ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , DIGITECH_TRANS_TYPE                      = LAST_VALUE(S.DIGITECH_TRANS_TYPE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , DIGITECH_TRANS_TYPE_DET                  = LAST_VALUE(S.DIGITECH_TRANS_TYPE_DET ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , INTRA_FUND_TRANS_FLAG                    = LAST_VALUE(S.INTRA_FUND_TRANS_FLAG ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , MAN_TRANS_FLAG                           = LAST_VALUE(S.MAN_TRANS_FLAG ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , MSTR_TRANS_TYPE                          = LAST_VALUE(S.MSTR_TRANS_TYPE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , PAY_METH                                 = LAST_VALUE(S.PAY_METH ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , PMAM_ADJMT_TO                            = LAST_VALUE(S.PMAM_ADJMT_TO ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , PMAM_ADJMT_TYPE                          = LAST_VALUE(S.PMAM_ADJMT_TYPE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , SMARTCM_IS_ADJMT                         = LAST_VALUE(S.SMARTCM_IS_ADJMT ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , SMARTCM_IS_FEE                           = LAST_VALUE(S.SMARTCM_IS_FEE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , SMARTCM_IS_PAY                           = LAST_VALUE(S.SMARTCM_IS_PAY ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , SMARTCM_OTHER_CRITERIA                   = LAST_VALUE(S.SMARTCM_OTHER_CRITERIA ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , SRC_SYS                                  = LAST_VALUE(S.SRC_SYS ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_MISC_ITEM_CODE                  = LAST_VALUE(S.T2_TRANS_MISC_ITEM_CODE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_MISC_ITEM_DESCR                 = LAST_VALUE(S.T2_TRANS_MISC_ITEM_DESCR ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_ORIG_OBJ_TYPE_ID                = LAST_VALUE(S.T2_TRANS_ORIG_OBJ_TYPE_ID ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_PARSED_DESCR                    = LAST_VALUE(S.T2_TRANS_PARSED_DESCR ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_RSN                             = LAST_VALUE(S.T2_TRANS_RSN ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_SCENARIO                        = LAST_VALUE(S.T2_TRANS_SCENARIO ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_TYPE_CODE                       = LAST_VALUE(S.T2_TRANS_TYPE_CODE ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , T2_TRANS_TYPE_DESCR                      = LAST_VALUE(S.T2_TRANS_TYPE_DESCR ) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_ ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+         , LOAD_DTE                                 = FIRST_VALUE(S.LOAD_DTE) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_)
+         , LOAD_TIME                                = FIRST_VALUE(S.LOAD_TIME) OVER (PARTITION BY S.BusinessKey_ ORDER BY S.NRec_)
+      FROM     #Together2 S
+     LEFT JOIN #Together2 P ON P.BusinessKey_ = S.BusinessKey_
+                           AND P.NRec_        = S.NRec_ - 1
+), RKeys as (
+    SELECT TRANSACTION_KEY                          = MAX(SurrogateKey_) OVER (PARTITION BY BusinessKey_ )
+         , DET_TRANS_CODE                           = BusinessKey_
+         , *
+      FROM Ordered            
+) 
+SELECT * 
+   INTO #TEMP
+  FROM RKeys 
+ WHERE NewRec_ = 1; 
+MERGE [' + @SOURCE + '].DIM_TRANSACTION AS T
+USING #TEMP AS S
+ON (T.TRANSACTION_KEY = S.TRANSACTION_KEY)
+WHEN NOT MATCHED BY TARGET THEN
+   INSERT( DET_TRANS_CODE
+        , ALLOC_TRANS_FLAG
+        , DERIVED_TRANS_FLAG
+        , DET_TRANS_DESCR
+        , DIGITECH_TRANS_TYPE
+        , DIGITECH_TRANS_TYPE_DET
+        , INTRA_FUND_TRANS_FLAG
+        , MAN_TRANS_FLAG
+        , MSTR_TRANS_TYPE
+        , PAY_METH
+        , PMAM_ADJMT_TO
+        , PMAM_ADJMT_TYPE
+        , SMARTCM_IS_ADJMT
+        , SMARTCM_IS_FEE
+        , SMARTCM_IS_PAY
+        , SMARTCM_OTHER_CRITERIA
+        , SRC_SYS
+        , T2_TRANS_MISC_ITEM_CODE
+        , T2_TRANS_MISC_ITEM_DESCR
+        , T2_TRANS_ORIG_OBJ_TYPE_ID
+        , T2_TRANS_PARSED_DESCR
+        , T2_TRANS_RSN
+        , T2_TRANS_SCENARIO
+        , T2_TRANS_TYPE_CODE
+        , T2_TRANS_TYPE_DESCR
+        , LOAD_DTE
+        , LOAD_TIME)
+   VALUES( S.DET_TRANS_CODE
+        , S.ALLOC_TRANS_FLAG
+        , S.DERIVED_TRANS_FLAG
+        , S.DET_TRANS_DESCR
+        , S.DIGITECH_TRANS_TYPE
+        , S.DIGITECH_TRANS_TYPE_DET
+        , S.INTRA_FUND_TRANS_FLAG
+        , S.MAN_TRANS_FLAG
+        , S.MSTR_TRANS_TYPE
+        , S.PAY_METH
+        , S.PMAM_ADJMT_TO
+        , S.PMAM_ADJMT_TYPE
+        , S.SMARTCM_IS_ADJMT
+        , S.SMARTCM_IS_FEE
+        , S.SMARTCM_IS_PAY
+        , S.SMARTCM_OTHER_CRITERIA
+        , S.SRC_SYS
+        , S.T2_TRANS_MISC_ITEM_CODE
+        , S.T2_TRANS_MISC_ITEM_DESCR
+        , S.T2_TRANS_ORIG_OBJ_TYPE_ID
+        , S.T2_TRANS_PARSED_DESCR
+        , S.T2_TRANS_RSN
+        , S.T2_TRANS_SCENARIO
+        , S.T2_TRANS_TYPE_CODE
+        , S.T2_TRANS_TYPE_DESCR
+        , S.LOAD_DTE
+        , S.LOAD_TIME)
+        
+WHEN MATCHED THEN
+UPDATE SET T.ALLOC_TRANS_FLAG                         = S.ALLOC_TRANS_FLAG
+        , T.DERIVED_TRANS_FLAG                       = S.DERIVED_TRANS_FLAG
+        , T.DET_TRANS_DESCR                          = S.DET_TRANS_DESCR
+        , T.DIGITECH_TRANS_TYPE                      = S.DIGITECH_TRANS_TYPE
+        , T.DIGITECH_TRANS_TYPE_DET                  = S.DIGITECH_TRANS_TYPE_DET
+        , T.INTRA_FUND_TRANS_FLAG                    = S.INTRA_FUND_TRANS_FLAG
+        , T.MAN_TRANS_FLAG                           = S.MAN_TRANS_FLAG
+        , T.MSTR_TRANS_TYPE                          = S.MSTR_TRANS_TYPE
+        , T.PAY_METH                                 = S.PAY_METH
+        , T.PMAM_ADJMT_TO                            = S.PMAM_ADJMT_TO
+        , T.PMAM_ADJMT_TYPE                          = S.PMAM_ADJMT_TYPE
+        , T.SMARTCM_IS_ADJMT                         = S.SMARTCM_IS_ADJMT
+        , T.SMARTCM_IS_FEE                           = S.SMARTCM_IS_FEE
+        , T.SMARTCM_IS_PAY                           = S.SMARTCM_IS_PAY
+        , T.SMARTCM_OTHER_CRITERIA                   = S.SMARTCM_OTHER_CRITERIA
+        , T.SRC_SYS                                  = S.SRC_SYS
+        , T.T2_TRANS_MISC_ITEM_CODE                  = S.T2_TRANS_MISC_ITEM_CODE
+        , T.T2_TRANS_MISC_ITEM_DESCR                 = S.T2_TRANS_MISC_ITEM_DESCR
+        , T.T2_TRANS_ORIG_OBJ_TYPE_ID                = S.T2_TRANS_ORIG_OBJ_TYPE_ID
+        , T.T2_TRANS_PARSED_DESCR                    = S.T2_TRANS_PARSED_DESCR
+        , T.T2_TRANS_RSN                             = S.T2_TRANS_RSN
+        , T.T2_TRANS_SCENARIO                        = S.T2_TRANS_SCENARIO
+        , T.T2_TRANS_TYPE_CODE                       = S.T2_TRANS_TYPE_CODE
+        , T.T2_TRANS_TYPE_DESCR                      = S.T2_TRANS_TYPE_DESCR
+        , T.LOAD_DTE                                 = S.LOAD_DTE
+        , T.LOAD_TIME                                = S.LOAD_TIME;');
+ END
+GO
+
+
